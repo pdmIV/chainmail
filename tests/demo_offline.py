@@ -65,6 +65,48 @@ def synthetic_facts() -> Facts:
     return f
 
 
+def connected_facts() -> Facts:
+    """HTB 'Connected'-style host: a root incron rule watches a writable
+    telephony config path, so the 'asterisk' user can fire a root command."""
+    f = Facts()
+    f.hostname = "connected"
+    f.os_release = "CentOS 7"
+    f.kernel = "3.10.0-1160"
+    f.arch = "x86_64"
+    f.current_user = "asterisk"
+    f.current_uid = 1001
+    f.current_gid = 1001
+    f.current_groups = ["asterisk"]
+    f.users = [User("root", 0, 0, "/root", "/bin/bash"),
+               User("asterisk", 1001, 1001, "/home/asterisk", "/bin/bash")]
+    f.groups = [Group("root", 0, []), Group("asterisk", 1001, [])]
+    # root incron rule watching a path asterisk can write
+    f.scheduled_jobs = [
+        ScheduledJob(source="/etc/incron.d/sysadmin", owner="root",
+                     command="/var/lib/asterisk/sysadmin.sh $@/$#",
+                     kind="incron", trigger_path="/etc/dahdi/system.conf"),
+    ]
+    f.writable_targets = [
+        WritableTarget(path="/etc/dahdi/system.conf", writable_via="user",
+                       note="watched by root's incron rule (/etc/incron.d/sysadmin)"),
+    ]
+    return f
+
+
+def _check_connected() -> None:
+    facts = connected_facts()
+    graph = build_graph(facts)
+    chains = find_chains(graph, facts, max_depth=6)
+    incron_chains = [c for c in chains
+                     if any("incron" in (e.title + e.detail) for e in c.edges)]
+    print("\n" + "=" * 70)
+    print("  Connected-style host check (incron vector)")
+    print("=" * 70)
+    print(render_report(facts, graph, chains, color=True))
+    assert chains, "expected an escalation chain on Connected-style host"
+    assert incron_chains, "incron writable-exec chain to root not found"
+
+
 def main() -> int:
     facts = synthetic_facts()
     graph = build_graph(facts)
@@ -87,6 +129,9 @@ def main() -> int:
     assert any("writable-exec" in c.categories for c in multistep), "writable-exec chain missing"
 
     print(f"\n[OK] {len(chains)} chains, {len(multistep)} multi-step. All assertions passed.")
+
+    _check_connected()
+    print("[OK] Connected-style incron vector detected.")
     return 0
 
 

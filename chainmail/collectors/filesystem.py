@@ -57,6 +57,13 @@ class FilesystemCollector(Collector):
         for job in facts.scheduled_jobs:
             for p in self._paths_in_command(job.command):
                 cands.setdefault(p, f"executed by {job.owner} via {job.kind} ({job.source})")
+            # For event-triggered jobs (incron), the watched path is the real
+            # primitive: writing it fires the command. Test it (and its parent).
+            if job.trigger_path:
+                cands.setdefault(
+                    job.trigger_path,
+                    f"watched by {job.owner}'s {job.kind} rule ({job.source})",
+                )
         # SUID/cap binaries that live in writable dirs are also interesting;
         # the binary path itself plus its directory.
         return cands

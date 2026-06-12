@@ -82,6 +82,7 @@ chainmail/
     identity.py       id, /etc/passwd, /etc/group, sudo -l
     suid.py           SUID/SGID binaries + file capabilities
     scheduled.py      cron (system/dropin/user) + systemd services/timers
+    incron.py         inotify-cron rules (/etc/incron.d, spool tables) + watched paths
     filesystem.py     targeted writability of $PATH dirs, job inputs, sensitive files
   knowledge/
     gtfobins.py       binary -> sudo/suid PoC templates (curated GTFOBins subset)
@@ -111,6 +112,12 @@ python3 tests/demo_offline.py    # builds synthetic facts, asserts chains found
 `path-hijack` (writable `$PATH` dir ahead of a job's bare command) ·
 `sensitive-write` (writable `/etc/passwd`, `sudoers`, `ld.so.preload`, …) ·
 `membership` (free relationship hop tying groups into routes).
+
+The `writable-exec` category also covers **incron**: a root `incrond` rule
+watching a path you can write is an escalation, because modifying the watched
+file fires the root command (HTB "Connected" is exactly this). chainmail
+reports it as `modify incron-watched path run by root` with the inject-and-touch
+PoC.
 
 ## Extending it
 

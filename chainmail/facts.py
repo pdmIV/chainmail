@@ -51,11 +51,18 @@ class CapabilityFile:
 
 @dataclass
 class ScheduledJob:
-    """A cron entry or systemd timer/service exec line."""
+    """A cron entry, systemd exec line, or filesystem-event-triggered rule.
+
+    For time-based jobs (cron/systemd) the escalation primitive is writability
+    of ``command``'s script. For event-based jobs (incron) it is writability of
+    ``trigger_path`` -- the watched file/dir whose modification fires the
+    root-run command. ``trigger_path`` is empty for time-based jobs.
+    """
     source: str                     # file or unit that defines it
     owner: str                      # user the job runs as (best-effort)
     command: str                    # the command line that gets executed
-    kind: str = "cron"              # cron | systemd | timer
+    kind: str = "cron"              # cron | systemd | timer | incron
+    trigger_path: str = ""          # watched path (incron); empty otherwise
 
 
 @dataclass

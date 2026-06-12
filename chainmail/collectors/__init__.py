@@ -11,12 +11,14 @@ from chainmail.facts import Facts
 from chainmail.collectors.identity import IdentityCollector
 from chainmail.collectors.suid import SuidCapsCollector
 from chainmail.collectors.scheduled import ScheduledCollector
+from chainmail.collectors.incron import IncronCollector
 from chainmail.collectors.filesystem import FilesystemCollector
 
 COLLECTOR_ORDER = [
     IdentityCollector,
     SuidCapsCollector,
     ScheduledCollector,
+    IncronCollector,
     FilesystemCollector,
 ]
 
