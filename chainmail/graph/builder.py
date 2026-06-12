@@ -15,7 +15,7 @@ from chainmail.knowledge import groups as groupkb
 from chainmail.graph.model import (
     Edge, Graph, user_node, group_node,
     MEMBERSHIP, SUDO, SUID, CAPABILITY, GROUP_PRIV, WRITABLE_EXEC,
-    PATH_HIJACK, SENSITIVE_WRITE,
+    PATH_HIJACK, SENSITIVE_WRITE, KERNEL_EXPLOIT,
 )
 
 ROOT = "root"
@@ -35,6 +35,7 @@ def build_graph(facts: Facts) -> Graph:
     _add_capabilities(g, facts, me)
     _add_scheduled_writes(g, facts, me)
     _add_sensitive_writes(g, facts, me)
+    _add_kernel_exploits(g, facts, me)
     return g
 
 
@@ -275,6 +276,36 @@ def _add_sensitive_writes(g: Graph, facts: Facts, me: str) -> None:
                 detail=f"{summary} (writable via {wt.writable_via})",
                 poc=poc,
             ))
+
+
+def _add_kernel_exploits(g: Graph, facts: Facts, me: str) -> None:
+    """Turn CVE-enrichment findings into direct user->root exploit edges.
+
+    Only findings classified as local-root vectors (curated DB) or flagged as
+    wild-exploited become edges, since a chain must actually reach root. Each
+    edge carries the public PoC reference and a 'verify' caveat -- chainmail
+    reports leads, it does not run exploits.
+    """
+    for f in facts.vuln_findings:
+        if not (getattr(f, "local_root", False) or getattr(f, "wild_exploited", False)):
+            continue
+        flags = []
+        if getattr(f, "wild_exploited", False):
+            flags.append("wild-exploited")
+        if getattr(f, "epss", None) is not None:
+            flags.append(f"EPSS {f.epss:.2f}")
+        if getattr(f, "cvss", None) is not None:
+            flags.append(f"CVSS {f.cvss}")
+        flag_str = f"  [{', '.join(flags)}]" if flags else ""
+        conf = getattr(f, "confidence", "lead")
+        g.add_edge(Edge(
+            src=user_node(me), dst=user_node(ROOT), category=KERNEL_EXPLOIT,
+            title=f"{f.cve} {f.name} ({f.component}) [{conf} confidence]",
+            detail=f"{f.summary} source={f.source}{flag_str}",
+            poc=f"public PoC: {f.reference}" if f.reference else
+                f"search Exploit-DB / GitHub for {f.cve}",
+            requires=f.requires or "confirm the target is unpatched before relying on this",
+        ))
 
 
 # --------------------------------------------------------------------------

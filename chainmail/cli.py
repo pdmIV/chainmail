@@ -8,6 +8,7 @@ from chainmail import __version__
 from chainmail.ssh import SSHTarget
 from chainmail.facts import Facts
 from chainmail.collectors import run_all_collectors
+from chainmail.vulnsources import enrich
 from chainmail.graph.builder import build_graph
 from chainmail.graph.pathfinder import find_chains
 from chainmail.report import render_report, render_json
@@ -64,6 +65,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--no-color", action="store_true", help="disable ANSI color in output"
     )
+
+    enr = p.add_argument_group("CVE enrichment")
+    enr.add_argument(
+        "--vuln-source", default="auto",
+        choices=["auto", "vulners", "osv", "none"],
+        help="online CVE source (default: auto = vulners if key else osv)",
+    )
+    enr.add_argument(
+        "--vulners-key", default=None,
+        help="Vulners API key (or set VULNERS_API_KEY env var)",
+    )
+    enr.add_argument(
+        "--offline", action="store_true",
+        help="curated CVE database only; make no network calls",
+    )
     p.add_argument("-v", "--verbose", action="count", default=0, help="-v, -vv")
     p.add_argument("--version", action="version", version=f"chainmail {__version__}")
     return p
@@ -112,6 +128,17 @@ def main(argv: list[str] | None = None) -> int:
         run_all_collectors(target, facts, verbose=args.verbose)
     finally:
         target.close()
+
+    # CVE enrichment (offline DB always; online source unless --offline/none).
+    # Network requests originate from this host, not the target.
+    if not args.json:
+        print("[*] enriching with CVE data "
+              f"({'offline only' if args.offline else args.vuln_source})...",
+              file=sys.stderr)
+    facts.vuln_findings = enrich(
+        facts, source_name=args.vuln_source, vulners_key=args.vulners_key,
+        offline_only=args.offline, verbose=args.verbose,
+    )
 
     graph = build_graph(facts)
     chains = find_chains(graph, facts, max_depth=args.max_depth)

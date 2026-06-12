@@ -50,6 +50,23 @@ class CapabilityFile:
 
 
 @dataclass
+class Package:
+    name: str
+    version: str                    # distro package version string
+    source: str = ""                # dpkg | rpm | apk
+    arch: str = ""                  # e.g. amd64 / x86_64
+
+    def audit_string(self) -> str:
+        """Format for the Vulners linux-audit API per package manager."""
+        if self.source == "rpm":
+            # NVRA, e.g. glibc-common-2.17-157.el7.x86_64
+            base = f"{self.name}-{self.version}"
+            return f"{base}.{self.arch}" if self.arch else base
+        # dpkg / apk: "name version arch"
+        return " ".join(p for p in (self.name, self.version, self.arch) if p)
+
+
+@dataclass
 class ScheduledJob:
     """A cron entry, systemd exec line, or filesystem-event-triggered rule.
 
@@ -80,6 +97,10 @@ class Facts:
     os_release: str = ""
     kernel: str = ""
     arch: str = ""
+    distro_id: str = ""             # e.g. "ubuntu", "debian", "centos"
+    distro_version: str = ""        # e.g. "22.04"
+    distro_codename: str = ""       # e.g. "jammy"
+    pkg_manager: str = ""           # dpkg | rpm | apk
 
     # --- current principal ---
     current_user: str = ""
@@ -94,10 +115,15 @@ class Facts:
     sudo_l_raw: str = ""
     suid_binaries: list[SuidBinary] = field(default_factory=list)
     capabilities: list[CapabilityFile] = field(default_factory=list)
+    packages: list[Package] = field(default_factory=list)
     scheduled_jobs: list[ScheduledJob] = field(default_factory=list)
     writable_targets: list[WritableTarget] = field(default_factory=list)
     path_dirs: list[str] = field(default_factory=list)
     writable_path_dirs: list[str] = field(default_factory=list)
+
+    # CVE enrichment findings (chainmail.vulnsources.base.VulnFinding); kept as a
+    # loose list here to avoid a circular import with the vulnsources package.
+    vuln_findings: list = field(default_factory=list)
 
     # raw command outputs kept for debugging / -vv
     raw: dict = field(default_factory=dict)

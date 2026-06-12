@@ -49,8 +49,11 @@ def render_report(facts: Facts, graph: Graph, chains: list[Chain], color: bool =
     out.append(f"    file capabilities : {len(facts.capabilities)}")
     out.append(f"    scheduled jobs    : {len(facts.scheduled_jobs)}")
     out.append(f"    writable targets  : {len(facts.writable_targets)}")
+    out.append(f"    key packages      : {len(facts.packages)}")
+    out.append(f"    CVE findings      : {len(facts.vuln_findings)}")
     out.append(f"    graph             : {len(graph.nodes)} nodes, {len(graph.edges)} edges")
     out.append("")
+    out.extend(_render_cve_findings(c, facts))
 
     if not chains:
         out.append(c.yellow("  No escalation chains to root were found with current data."))
@@ -79,6 +82,26 @@ def render_report(facts: Facts, graph: Graph, chains: list[Chain], color: bool =
     out.append(c.dim("  PoC commands are for manual, authorized verification only. "
                      "chainmail never runs them."))
     return "\n".join(out)
+
+
+def _render_cve_findings(c: _C, facts: Facts) -> list[str]:
+    findings = getattr(facts, "vuln_findings", []) or []
+    if not findings:
+        return []
+    order = {"high": 0, "medium": 1, "lead": 2}
+    findings = sorted(findings, key=lambda f: (order.get(getattr(f, "confidence", "lead"), 3),
+                                               f.cve))
+    lines = [c.bold("  CVE enrichment (kernel + key packages)")]
+    for f in findings:
+        conf = getattr(f, "confidence", "lead")
+        tag = (c.red("LOCAL-ROOT") if getattr(f, "local_root", False) else c.dim("lead"))
+        wild = c.red(" WILD-EXPLOITED") if getattr(f, "wild_exploited", False) else ""
+        lines.append(f"    {c.yellow(f.cve)} {f.name}  ({f.component}) "
+                     f"[{tag}/{conf}{wild}]  src={f.source}")
+        if f.reference:
+            lines.append(c.dim(f"        ref: {f.reference}"))
+    lines.append("")
+    return lines
 
 
 def _render_chain(c: _C, idx: int, ch: Chain) -> list[str]:
@@ -134,7 +157,22 @@ def render_json(facts: Facts, graph: Graph, chains: list[Chain]) -> str:
             "graph_edges": len(graph.edges),
             "chains_total": len(chains),
             "chains_multistep": sum(1 for c in chains if c.is_multistep),
+            "key_packages": len(facts.packages),
+            "cve_findings": len(getattr(facts, "vuln_findings", []) or []),
         },
+        "cve_findings": [
+            {
+                "cve": f.cve, "name": f.name, "component": f.component,
+                "summary": f.summary, "reference": f.reference,
+                "requires": f.requires, "severity": f.severity, "source": f.source,
+                "local_root": getattr(f, "local_root", False),
+                "corroborated": getattr(f, "corroborated", False),
+                "wild_exploited": getattr(f, "wild_exploited", False),
+                "epss": getattr(f, "epss", None), "cvss": getattr(f, "cvss", None),
+                "confidence": getattr(f, "confidence", "lead"),
+            }
+            for f in (getattr(facts, "vuln_findings", []) or [])
+        ],
         "chains": [
             {
                 "rank": i + 1,

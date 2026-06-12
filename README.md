@@ -71,6 +71,37 @@ Example output (synthetic lab host):
          PoC $ echo '#!/bin/sh' > /opt/backup/run.sh; echo '/bin/sh -i' >> /opt/backup/run.sh
 ```
 
+## CVE enrichment (kernel / exploit suggester)
+
+chainmail keys known local-root CVEs off the target's `uname` and key package
+versions (sudo, polkit/pkexec, glibc, dbus, util-linux, PAM, snapd), then adds
+a direct `you -> root` edge for each confirmed vector. It combines two layers:
+
+- **Offline curated database** (`knowledge/kernel_cve.py`) — always on, no
+  network. Well-known LPEs (Dirty COW, Dirty Pipe, PwnKit, Baron Samedit,
+  Looney Tunables, OverlayFS, nf_tables, ptrace TRACEME, Netfilter…) with
+  version ranges and public PoC references. This is also the authoritative
+  "is this CVE actually a local-root vector" filter for online noise.
+- **Live API** — fresh CVEs, EPSS, and CISA-KEV/AttackerKB "wild exploited"
+  flags. Default is **Vulners** `audit/host` (best exploit intel; needs a free
+  key), falling back to keyless **OSV.dev** when no key is set.
+
+```bash
+# Vulners (recommended): free key from vulners.com, then
+export VULNERS_API_KEY=xxxxxxxx
+python3 chainmail.py bob@target -i key                 # auto-uses Vulners
+
+python3 chainmail.py bob@target -i key --vuln-source osv     # keyless OSV
+python3 chainmail.py bob@target -i key --offline             # curated DB only, no network
+```
+
+Network requests go out **from the host running chainmail** (your Kali box),
+not the target. Findings are scored by confidence — `high` (curated LPE
+corroborated by a relevant SUID on the host, or wild-exploited), `medium`
+(curated match), `lead` (online-only). Because distros backport fixes without
+bumping version strings, every finding carries a "confirm patch level" caveat:
+chainmail reports leads and points at public PoCs, it never runs exploit code.
+
 ## Architecture
 
 ```
@@ -83,7 +114,14 @@ chainmail/
     suid.py           SUID/SGID binaries + file capabilities
     scheduled.py      cron (system/dropin/user) + systemd services/timers
     incron.py         inotify-cron rules (/etc/incron.d, spool tables) + watched paths
+    packages.py       distro id/codename + key privesc package versions
     filesystem.py     targeted writability of $PATH dirs, job inputs, sensitive files
+  vulnsources/        CVE enrichment ("exploit suggester")
+    offline.py          curated kernel-LPE database matcher (always on, no network)
+    vulners.py          Vulners linux-audit client (API key; wild-exploited + EPSS)
+    osv.py              OSV.dev client (keyless)
+  knowledge/
+    kernel_cve.py       curated local-root CVEs + version predicates + PoC refs
   knowledge/
     gtfobins.py       binary -> sudo/suid PoC templates (curated GTFOBins subset)
     groups.py         group -> escalation (docker, lxd, disk, shadow, ...)
@@ -111,6 +149,7 @@ python3 tests/demo_offline.py    # builds synthetic facts, asserts chains found
 `writable-exec` (write a file a scheduled job runs as someone else) ·
 `path-hijack` (writable `$PATH` dir ahead of a job's bare command) ·
 `sensitive-write` (writable `/etc/passwd`, `sudoers`, `ld.so.preload`, …) ·
+`kernel-exploit` (known local-root CVE keyed on kernel/package versions) ·
 `membership` (free relationship hop tying groups into routes).
 
 The `writable-exec` category also covers **incron**: a root `incrond` rule
@@ -129,10 +168,12 @@ The knowledge base is intentionally trivial to grow:
 - Add a whole new edge category: a collector to gather the facts, a small
   `_add_*` function in `graph/builder.py`, and the pathfinder picks it up for
   free.
+- Add a kernel/userland CVE: one `KernelCVE` entry in `knowledge/kernel_cve.py`
+  with a version predicate and a public PoC reference.
+- Add a vulnerability source: subclass `VulnerabilitySource` in `vulnsources/`.
 
 ## Roadmap ideas
 
-- Kernel/exploit-suggester edges keyed on `uname`/package versions.
 - NFS `no_root_squash`, writable systemd timers, D-Bus/polkit chains.
 - DOT/JSON graph export for visual review in BloodHound-style UIs.
 - Pivot through intermediate *users* (not just groups) when creds/keys are
