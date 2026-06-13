@@ -114,6 +114,7 @@ chainmail/
     suid.py           SUID/SGID binaries + file capabilities
     scheduled.py      cron (system/dropin/user) + systemd services/timers
     incron.py         inotify-cron rules (/etc/incron.d, spool tables) + watched paths
+    jobscripts.py     reads root-run job scripts; finds hijackable includes
     packages.py       distro id/codename + key privesc package versions
     filesystem.py     targeted writability of $PATH dirs, job inputs, sensitive files
   vulnsources/        CVE enrichment ("exploit suggester")
@@ -150,13 +151,25 @@ python3 tests/demo_offline.py    # builds synthetic facts, asserts chains found
 `path-hijack` (writable `$PATH` dir ahead of a job's bare command) ·
 `sensitive-write` (writable `/etc/passwd`, `sudoers`, `ld.so.preload`, …) ·
 `kernel-exploit` (known local-root CVE keyed on kernel/package versions) ·
+`include-hijack` (writable/missing file included by a root-run script) ·
 `membership` (free relationship hop tying groups into routes).
 
-The `writable-exec` category also covers **incron**: a root `incrond` rule
-watching a path you can write is an escalation, because modifying the watched
-file fires the root command (HTB "Connected" is exactly this). chainmail
-reports it as `modify incron-watched path run by root` with the inject-and-touch
-PoC.
+**incron and include-hijacking.** A root `incrond` rule has two distinct
+ingredients, and chainmail models them separately:
+
+- If the triggered command *consumes the watched file* (incron `$@`/`$#`
+  wildcards, or the path appears in the command), writing the file injects into
+  a root context — a `writable-exec` edge with a `touch`-to-fire PoC.
+- More commonly the watched file is only a *trigger* for a fixed root helper
+  script, and the real code-exec is a file that script `include`s / `require`s
+  / `source`s which you can control. This is the actual HTB "Connected" vector:
+  `/usr/sbin/sysadmin_ha` runs as root on trigger and `require_once`s a PHP file
+  that **doesn't exist** under a writable directory. chainmail's `jobscripts`
+  collector reads the root script, resolves its includes (including
+  `$var`-assigned paths), and flags any that are writable **or missing with a
+  writable ancestor**. The `include-hijack` edge's PoC creates the missing
+  include — stubbing the exact `class::method` the script invokes — then fires
+  the trigger.
 
 ## Extending it
 

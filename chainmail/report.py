@@ -49,6 +49,7 @@ def render_report(facts: Facts, graph: Graph, chains: list[Chain], color: bool =
     out.append(f"    file capabilities : {len(facts.capabilities)}")
     out.append(f"    scheduled jobs    : {len(facts.scheduled_jobs)}")
     out.append(f"    writable targets  : {len(facts.writable_targets)}")
+    out.append(f"    hijackable incl.  : {len(facts.hijackable_includes)}")
     out.append(f"    key packages      : {len(facts.packages)}")
     out.append(f"    CVE findings      : {len(facts.vuln_findings)}")
     out.append(f"    graph             : {len(graph.nodes)} nodes, {len(graph.edges)} edges")

@@ -13,6 +13,7 @@ from chainmail.collectors.suid import SuidCapsCollector
 from chainmail.collectors.scheduled import ScheduledCollector
 from chainmail.collectors.incron import IncronCollector
 from chainmail.collectors.packages import PackagesCollector
+from chainmail.collectors.jobscripts import JobScriptsCollector
 from chainmail.collectors.filesystem import FilesystemCollector
 
 COLLECTOR_ORDER = [
@@ -21,6 +22,7 @@ COLLECTOR_ORDER = [
     ScheduledCollector,
     IncronCollector,
     PackagesCollector,
+    JobScriptsCollector,
     FilesystemCollector,
 ]
 

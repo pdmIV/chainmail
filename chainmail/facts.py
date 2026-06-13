@@ -91,6 +91,30 @@ class WritableTarget:
 
 
 @dataclass
+class HijackableInclude:
+    """A file include/source consumed by a root-run job script that the current
+    principal can control -- either it is already writable, or it is missing and
+    its nearest existing ancestor directory is writable (so it can be created).
+
+    This is the real "Connected" (HTB) primitive: a root incron helper script
+    require_once()s a PHP file under a writable, non-existent path. The watched
+    incron file is only the trigger; this is where root code execution comes
+    from.
+    """
+    script_path: str                # the root-run script doing the include
+    include_path: str               # the path it includes/requires/sources
+    language: str                   # php | shell | perl
+    state: str                      # "writable" | "missing-writable-parent"
+    writable_via: str               # user | group:<name> | world (of the anchor)
+    anchor: str = ""                # existing writable dir (missing case)
+    owner: str = "root"             # principal the script runs as
+    job_kind: str = ""              # incron | cron | systemd (how it fires)
+    job_source: str = ""            # rule/unit that runs the script
+    trigger_path: str = ""          # incron watched path to fire it (if any)
+    invoke_hint: str = ""           # e.g. "class incron::rootTrigger" for PoC
+
+
+@dataclass
 class Facts:
     # --- host ---
     hostname: str = ""
@@ -118,6 +142,7 @@ class Facts:
     packages: list[Package] = field(default_factory=list)
     scheduled_jobs: list[ScheduledJob] = field(default_factory=list)
     writable_targets: list[WritableTarget] = field(default_factory=list)
+    hijackable_includes: list[HijackableInclude] = field(default_factory=list)
     path_dirs: list[str] = field(default_factory=list)
     writable_path_dirs: list[str] = field(default_factory=list)
 

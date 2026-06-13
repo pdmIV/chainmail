@@ -35,6 +35,7 @@ WRITABLE_EXEC = "writable-exec"  # write a file executed by another principal
 PATH_HIJACK = "path-hijack"
 SENSITIVE_WRITE = "sensitive-write"
 KERNEL_EXPLOIT = "kernel-exploit"  # known local-root CVE (kernel/userland)
+INCLUDE_HIJACK = "include-hijack"  # writable/missing include consumed by root job
 
 
 @dataclass
