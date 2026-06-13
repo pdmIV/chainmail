@@ -5,6 +5,7 @@ import argparse
 import sys
 
 from chainmail import __version__
+from chainmail import banner as _banner
 from chainmail.ssh import SSHTarget
 from chainmail.facts import Facts
 from chainmail.collectors import run_all_collectors
@@ -115,7 +116,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if not args.json:
-        print(f"[*] chainmail {__version__} -> connecting to {user}@{host}:{args.port}", file=sys.stderr)
+        print(_banner.render(__version__, color=not args.no_color), file=sys.stderr)
+        print(f"[*] connecting to {user}@{host}:{args.port}", file=sys.stderr)
 
     try:
         target.connect()
